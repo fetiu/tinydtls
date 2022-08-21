@@ -259,6 +259,10 @@ static int
 handle_alert(dtls_context_t *ctx, dtls_peer_t *peer,
 		uint8 *record_header, uint8 *data, size_t data_length);
 
+static inline int
+dtls_set_alert_timer(dtls_context_t *ctx, dtls_peer_t *peer, dtls_alert_level_t level,
+                     dtls_alert_t description, unsigned int timeout);
+
 /**
  * Sends the fragment of length \p buflen given in \p buf to the
  * specified \p peer. The data will be MAC-protected and encrypted
@@ -1841,16 +1845,21 @@ dtls_send_alert(dtls_context_t *ctx, dtls_peer_t *peer, dtls_alert_level_t level
   uint8_t msg[] = { level, description };
 
   dtls_send(ctx, peer, DTLS_CT_ALERT, msg, sizeof(msg));
+  return dtls_set_alert_timer(ctx, peer, level, description, DTLS_ALERT_TIMEOUT_TICKS);
+}
 
+static inline int
+dtls_set_alert_timer(dtls_context_t *ctx, dtls_peer_t *peer, dtls_alert_level_t level,
+                     dtls_alert_t description, unsigned int timeout) {
   /* copy close alert in retransmit buffer to emulate timeout */
   /* not resent, therefore don't copy the complete record */
   netq_t *n = netq_node_new(2);
   if (n) {
     dtls_tick_t now;
     dtls_ticks(&now);
-    n->t = now + 2 * CLOCK_SECOND;
+    n->t = now + timeout;
     n->retransmit_cnt = 0;
-    n->timeout = 2 * CLOCK_SECOND;
+    n->timeout = timeout;
     n->peer = peer;
     n->epoch = peer->security_params[0]->epoch;
     n->type = DTLS_CT_ALERT;
@@ -1877,11 +1886,20 @@ dtls_send_alert(dtls_context_t *ctx, dtls_peer_t *peer, dtls_alert_level_t level
     dtls_warn("cannot add alert, retransmit buffer full\n");
   }
   if (!n) {
+    uint8_t msg[] = { level, description };
     /* timeout not registered */
     handle_alert(ctx, peer, NULL, msg, sizeof(msg));
   }
 
   return 0;
+}
+
+static void
+dtls_set_handshake_timer(dtls_context_t *ctx, dtls_peer_t *peer, unsigned int timeout) {
+    /* copy a fatal alert in retransmit buffer to emulate handshake timeout */
+    /* it won't actually be sent, but just to invalidate expired handshakes */
+    dtls_set_alert_timer(ctx, peer, DTLS_ALERT_LEVEL_FATAL,
+                         DTLS_ALERT_HANDSHAKE_FAILURE, timeout);
 }
 
 int
@@ -3620,6 +3638,7 @@ handle_handshake_msg(dtls_context_t *ctx, dtls_peer_t *peer, uint8 *data, size_t
       peer->state = DTLS_STATE_WAIT_SERVERHELLODONE;
     }
     /* update_hs_hash(peer, data, data_length); */
+    dtls_set_handshake_timer(ctx, peer, DTLS_HANDSHAKE_TIMEOUT_TICKS);
 
     break;
 
@@ -3640,6 +3659,7 @@ handle_handshake_msg(dtls_context_t *ctx, dtls_peer_t *peer, uint8 *data, size_t
     } else if (role == DTLS_SERVER){
       peer->state = DTLS_STATE_WAIT_CLIENTKEYEXCHANGE;
     }
+    dtls_set_handshake_timer(ctx, peer, DTLS_HANDSHAKE_TIMEOUT_TICKS);
     /* update_hs_hash(peer, data, data_length); */
 
     break;
@@ -3674,6 +3694,7 @@ handle_handshake_msg(dtls_context_t *ctx, dtls_peer_t *peer, uint8 *data, size_t
       return err;
     }
     peer->state = DTLS_STATE_WAIT_SERVERHELLODONE;
+    dtls_set_handshake_timer(ctx, peer, DTLS_HANDSHAKE_TIMEOUT_TICKS);
     /* update_hs_hash(peer, data, data_length); */
 
     break;
@@ -3708,6 +3729,7 @@ handle_handshake_msg(dtls_context_t *ctx, dtls_peer_t *peer, uint8 *data, size_t
       dtls_warn("error in check_certificate_request err: %i\n", err);
       return err;
     }
+    dtls_set_handshake_timer(ctx, peer, DTLS_HANDSHAKE_TIMEOUT_TICKS);
 
     break;
 #endif /* DTLS_ECC */
@@ -3780,6 +3802,8 @@ handle_handshake_msg(dtls_context_t *ctx, dtls_peer_t *peer, uint8 *data, size_t
       peer->state = DTLS_STATE_WAIT_CERTIFICATEVERIFY;
     else
       peer->state = DTLS_STATE_WAIT_CHANGECIPHERSPEC;
+    dtls_set_handshake_timer(ctx, peer, DTLS_HANDSHAKE_TIMEOUT_TICKS);
+
     break;
 
 #ifdef DTLS_ECC
@@ -3797,6 +3821,8 @@ handle_handshake_msg(dtls_context_t *ctx, dtls_peer_t *peer, uint8 *data, size_t
 
     update_hs_hash(peer, data, data_length);
     peer->state = DTLS_STATE_WAIT_CHANGECIPHERSPEC;
+    dtls_set_handshake_timer(ctx, peer, DTLS_HANDSHAKE_TIMEOUT_TICKS);
+
     break;
 #endif /* DTLS_ECC */
 
@@ -4165,6 +4191,7 @@ handle_ccs(dtls_context_t *ctx, dtls_peer_t *peer,
   peer->handshake_params->hs_state.read_epoch++;
   assert(peer->handshake_params->hs_state.read_epoch > 0);
   peer->state = DTLS_STATE_WAIT_FINISHED;
+  dtls_set_handshake_timer(ctx, peer, DTLS_HANDSHAKE_TIMEOUT_TICKS);
 
   return 0;
 }

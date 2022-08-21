@@ -62,6 +62,15 @@ typedef unsigned char uint48[6];
 #define DTLS_DEFAULT_MAX_RETRANSMIT 7
 #endif
 
+#ifndef DTLS_ALERT_TIMEOUT_TICKS
+/** Maximum wait time until peer cleanup on send alert */
+#define DTLS_ALERT_TIMEOUT_TICKS (2 * DTLS_TICKS_PER_SECOND)
+#endif
+#ifndef DTLS_HANDSHAKE_TIMEOUT_TICKS
+/** Maximum wait time until peer cleanup on handshake */
+#define DTLS_HANDSHAKE_TIMEOUT_TICKS (60 * DTLS_TICKS_PER_SECOND)
+#endif
+
 /** Known cipher suites.*/
 typedef enum { 
   TLS_NULL_WITH_NULL_NULL = 0x0000,   /**< NULL cipher  */
