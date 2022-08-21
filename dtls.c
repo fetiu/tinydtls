@@ -4697,6 +4697,14 @@ return_unlock:
 
   dtls_debug("** removed transaction\n");
 
+  /* HACK: Reaching here means that there was no response even after maximum retransmissions.
+   * The most likely situation is that the other side already has lost or aborted the session.
+   * Meantime, here we only removed the transaction and the peer state was retained afterward.
+   * Due to this incomplete state of an existing peer, dtls_connnect() drops further handshake.
+   * By removing the peer here, we can now let the upcoming handshake create a brand new peer.
+   * cf. dtls_send_multi(), dtls_renegotiate(), handle_handshake_msg() */
+  dtls_destroy_peer(context, node->peer, 1);
+
   /* And finally delete the node */
   netq_node_free(node);
 }
